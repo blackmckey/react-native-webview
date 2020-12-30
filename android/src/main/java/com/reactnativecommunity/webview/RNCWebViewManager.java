@@ -4,8 +4,10 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.Manifest;
@@ -818,55 +820,102 @@ public class RNCWebViewManager extends SimpleViewManager<WebView> {
           createWebViewEvent(webView, url)));
     }
 
+
+//    @Override
+//    public boolean shouldOverrideUrlLoading(WebView view, String url) {
+//      final RNCWebView rncWebView = (RNCWebView) view;
+//      final boolean isJsDebugging = ((ReactContext) view.getContext()).getJavaScriptContextHolder().get() == 0;
+//
+//      if (!isJsDebugging && rncWebView.mCatalystInstance != null) {
+//        final Pair<Integer, AtomicReference<ShouldOverrideCallbackState>> lock = RNCWebViewModule.shouldOverrideUrlLoadingLock.getNewLock();
+//        final int lockIdentifier = lock.first;
+//        final AtomicReference<ShouldOverrideCallbackState> lockObject = lock.second;
+//
+//        final WritableMap event = createWebViewEvent(view, url);
+//        event.putInt("lockIdentifier", lockIdentifier);
+//        rncWebView.sendDirectMessage("onShouldStartLoadWithRequest", event);
+//
+//        try {
+//          assert lockObject != null;
+//          synchronized (lockObject) {
+//            final long startTime = SystemClock.elapsedRealtime();
+//            while (lockObject.get() == ShouldOverrideCallbackState.UNDECIDED) {
+//              if (SystemClock.elapsedRealtime() - startTime > SHOULD_OVERRIDE_URL_LOADING_TIMEOUT) {
+//                FLog.w(TAG, "Did not receive response to shouldOverrideUrlLoading in time, defaulting to allow loading.");
+//                RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
+//                return false;
+//              }
+//              lockObject.wait(SHOULD_OVERRIDE_URL_LOADING_TIMEOUT);
+//            }
+//          }
+//        } catch (InterruptedException e) {
+//          FLog.e(TAG, "shouldOverrideUrlLoading was interrupted while waiting for result.", e);
+//          RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
+//          return false;
+//        }
+//
+//        final boolean shouldOverride = lockObject.get() == ShouldOverrideCallbackState.SHOULD_OVERRIDE;
+//        RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
+//
+//        return shouldOverride;
+//      } else {
+//        FLog.w(TAG, "Couldn't use blocking synchronous call for onShouldStartLoadWithRequest due to debugging or missing Catalyst instance, falling back to old event-and-load.");
+//        progressChangedFilter.setWaitingForCommandLoadUrl(true);
+//        dispatchEvent(
+//          view,
+//          new TopShouldStartLoadWithRequestEvent(
+//            view.getId(),
+//            createWebViewEvent(view, url)));
+//        return true;
+//      }
+//    }
     @Override
-    public boolean shouldOverrideUrlLoading(WebView view, String url) {
-      final RNCWebView rncWebView = (RNCWebView) view;
-      final boolean isJsDebugging = ((ReactContext) view.getContext()).getJavaScriptContextHolder().get() == 0;
-
-      if (!isJsDebugging && rncWebView.mCatalystInstance != null) {
-        final Pair<Integer, AtomicReference<ShouldOverrideCallbackState>> lock = RNCWebViewModule.shouldOverrideUrlLoadingLock.getNewLock();
-        final int lockIdentifier = lock.first;
-        final AtomicReference<ShouldOverrideCallbackState> lockObject = lock.second;
-
-        final WritableMap event = createWebViewEvent(view, url);
-        event.putInt("lockIdentifier", lockIdentifier);
-        rncWebView.sendDirectMessage("onShouldStartLoadWithRequest", event);
-
-        try {
-          assert lockObject != null;
-          synchronized (lockObject) {
-            final long startTime = SystemClock.elapsedRealtime();
-            while (lockObject.get() == ShouldOverrideCallbackState.UNDECIDED) {
-              if (SystemClock.elapsedRealtime() - startTime > SHOULD_OVERRIDE_URL_LOADING_TIMEOUT) {
-                FLog.w(TAG, "Did not receive response to shouldOverrideUrlLoading in time, defaulting to allow loading.");
-                RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
-                return false;
-              }
-              lockObject.wait(SHOULD_OVERRIDE_URL_LOADING_TIMEOUT);
-            }
-          }
-        } catch (InterruptedException e) {
-          FLog.e(TAG, "shouldOverrideUrlLoading was interrupted while waiting for result.", e);
-          RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
-          return false;
-        }
-
-        final boolean shouldOverride = lockObject.get() == ShouldOverrideCallbackState.SHOULD_OVERRIDE;
-        RNCWebViewModule.shouldOverrideUrlLoadingLock.removeLock(lockIdentifier);
-
-        return shouldOverride;
+    public boolean shouldOverrideUrlLoading(WebView webView, String url) {
+      if (url.startsWith("http:") || url.startsWith("https:")) {
+        return false;
       } else {
-        FLog.w(TAG, "Couldn't use blocking synchronous call for onShouldStartLoadWithRequest due to debugging or missing Catalyst instance, falling back to old event-and-load.");
-        progressChangedFilter.setWaitingForCommandLoadUrl(true);
-        dispatchEvent(
-          view,
-          new TopShouldStartLoadWithRequestEvent(
-            view.getId(),
-            createWebViewEvent(view, url)));
-        return true;
+        if (url.startsWith("intent://")) {
+          try {
+            Context context = webView.getContext();
+            Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+            if (intent != null) {
+              PackageManager packageManager = context.getPackageManager();
+              ResolveInfo info = packageManager.resolveActivity(intent,
+                PackageManager.MATCH_DEFAULT_ONLY);
+              // This IF statement can be omitted if you are not strict about
+              // opening the Google form url in WebView & can be opened in an
+              // External Browser
+              if ((intent != null) && ((intent.getScheme().equals("https"))
+                || (intent.getScheme().equals("http")))) {
+                String fallbackUrl = intent.getStringExtra(
+                  "browser_fallback_url");
+                webView.loadUrl(fallbackUrl);
+                return true;
+              }
+              if (info != null) {
+                context.startActivity(intent);
+              } else {
+                // Call external broswer
+                String fallbackUrl = intent.getStringExtra(
+                  "browser_fallback_url");
+                Intent browserIntent = new Intent(Intent.ACTION_VIEW,
+                  Uri.parse(fallbackUrl));
+                context.startActivity(browserIntent);
+              }
+              return true;
+            } else {
+              return false;
+            }
+          } catch (Exception e) {
+            return false;
+          }
+        } else {
+          Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+          webView.getContext().startActivity(intent);
+          return true;
+        }
       }
     }
-
     @TargetApi(Build.VERSION_CODES.N)
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
